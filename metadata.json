@@ -1,0 +1,6 @@
+{
+  "name": "Secure User Authentication System",
+  "description": "An interactive user authentication system with secure login and registration functionality gapped by state-of-the-art Firestore Zero-Trust rules.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

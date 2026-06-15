@@ -1,0 +1,164 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ==========================================
+    // 1. GLOBAL SAFETY NET (DEFAULT DENY)
+    // ==========================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // 2. HARDENED GLOBAL UTILITIES / PRIMITIVES
+    // ==========================================
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('[a-zA-Z0-9_\\-]+');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Bootstrapped administrator config using current runtime user e-mail coordinate
+    function isBootstrappedAdmin() {
+      return request.auth.token.email == 'dasarijeavan1234@gmail.com';
+    }
+
+    // Helper to evaluate roles directly on Firestore documents bypassing client assumptions
+    function isUserRole(reqUid, requiredRole) {
+      return exists(/databases/$(database)/documents/users/$(reqUid)/public/profile) &&
+             get(/databases/$(database)/documents/users/$(reqUid)/public/profile).data.role == requiredRole;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        isBootstrappedAdmin() ||
+        isUserRole(request.auth.uid, 'admin')
+      );
+    }
+
+    function isModerator() {
+      return isSignedIn() && (
+        isBootstrappedAdmin() ||
+        isUserRole(request.auth.uid, 'moderator') ||
+        isUserRole(request.auth.uid, 'admin')
+      );
+    }
+
+    // ==========================================
+    // 3. ENTITY VALIDATION SCHEMAS
+    // ==========================================
+    function isValidPublicProfile(data) {
+      return data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 80 &&
+             data.role is string && (data.role == 'user' || data.role == 'moderator' || data.role == 'admin') &&
+             data.avatarColor is string && data.avatarColor.size() == 7 && data.avatarColor.matches('#[A-Fa-f0-9]{6}');
+    }
+
+    function isValidPrivateInfo(data) {
+      return data.email is string && data.email.size() >= 5 && data.email.size() <= 254 &&
+             data.email.matches('[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}') &&
+             data.providerId is string && data.providerId.size() <= 40;
+    }
+
+    function isValidAuditLog(data) {
+      return data.userId is string && data.userId.size() <= 128 && data.userId.matches('[a-zA-Z0-9_\\-]+') &&
+             data.userEmail is string && data.userEmail.size() <= 254 &&
+             data.action is string && data.action.size() <= 50 &&
+             data.details is string && data.details.size() <= 200;
+    }
+
+    // ==========================================
+    // 4. COLLECTION ACCESS CONTROLS
+    // ==========================================
+
+    // PUBLIC PROFILES (/users/{userId}/public/profile)
+    match /users/{userId}/public/profile {
+      allow get: if isSignedIn();
+      
+      // Query Enforcer checking list operations
+      allow list: if isSignedIn();
+
+      allow create: if (
+        isSignedIn() &&
+        userId == request.auth.uid &&
+        isValidId(userId) &&
+        isValidPublicProfile(incoming()) &&
+        incoming().updatedAt == request.time &&
+        (incoming().role == 'user' || isBootstrappedAdmin())
+      );
+
+      allow update: if (
+        isSignedIn() &&
+        isValidId(userId) &&
+        isValidPublicProfile(incoming()) &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action 1: Self Profile Rename or Avatar update (Role remains strictly unaltered)
+          (userId == request.auth.uid && incoming().role == existing().role && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'avatarColor', 'updatedAt'])) ||
+          // Action 2: Role management by administrators
+          (isAdmin() && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['role', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'avatarColor', 'role', 'updatedAt'])
+          ))
+        )
+      );
+
+      allow delete: if false; // Profile deletion must occur via backend administrative structures
+    }
+
+    // PRIVATE INFORMATION (/users/{userId}/private/info)
+    match /users/{userId}/private/info {
+      allow get: if isSignedIn() && (userId == request.auth.uid || isAdmin());
+      allow list: if false; // Private PII details are never listable under any circumstances
+
+      allow create: if (
+        isSignedIn() &&
+        userId == request.auth.uid &&
+        isValidId(userId) &&
+        isValidPrivateInfo(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().lastLogin == request.time &&
+        incoming().email == request.auth.token.email
+      );
+
+      allow update: if (
+        isSignedIn() &&
+        userId == request.auth.uid &&
+        isValidId(userId) &&
+        isValidPrivateInfo(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().email == existing().email &&
+        incoming().lastLogin == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['lastLogin', 'providerId'])
+      );
+
+      allow delete: if false;
+    }
+
+    // SECURITY AUDIT LOGS (/logs/{logId})
+    match /logs/{logId} {
+      allow get: if isModerator();
+      
+      // Read access only granted to moderators and admins ensuring zero leakage to normal user peers
+      allow list: if isModerator();
+
+      allow create: if (
+        isSignedIn() &&
+        isValidId(logId) &&
+        isValidAuditLog(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().timestamp == request.time
+      );
+
+      allow update, delete: if false; // Write-once ledger: logs are fully immutable
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "public_profile": {
+      "title": "Public Profile",
+      "description": "Publicly accessible profile information for a user.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string", "description": "Display name of the user" },
+        "role": { "type": "string", "enum": ["admin", "moderator", "user"], "description": "Role representation for role-based access control" },
+        "avatarColor": { "type": "string", "description": "Selected avatar display color hex code" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Timestamp indicating last profile modifications" }
+      },
+      "required": ["displayName", "role", "avatarColor", "updatedAt"]
+    },
+    "private_info": {
+      "title": "Private Information",
+      "description": "Highly restricted sensitive user profile information.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "E-mail address of the user" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the user account was initialized" },
+        "lastLogin": { "type": "string", "format": "date-time", "description": "Timestamp of the user last successful sign-in" },
+        "providerId": { "type": "string", "description": "Provider method for authentication (google.com or password)" }
+      },
+      "required": ["email", "createdAt", "lastLogin", "providerId"]
+    },
+    "audit_log": {
+      "title": "Audit Log",
+      "description": "Historic security events logged inside the application.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "ID of the user triggering this action" },
+        "userEmail": { "type": "string", "description": "Email address of the user for admin visibility" },
+        "action": { "type": "string", "description": "Type of event (LOGIN, REGISTER, PROFILE_RENAME, ROLE_CHANGE)" },
+        "details": { "type": "string", "description": "Literal details describing the context of the action" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Strict server timestamp indicating when event occurred" }
+      },
+      "required": ["userId", "userEmail", "action", "details", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/public/profile": {
+      "schema": "public_profile",
+      "description": "Stores user publicly readable name and application security role."
+    },
+    "/users/{userId}/private/info": {
+      "schema": "private_info",
+      "description": "Stores user private PII, only readable by the owner themselves or system admins."
+    },
+    "/logs/{logId}": {
+      "schema": "audit_log",
+      "description": "A collection containing historical security auditing information."
+    }
+  }
+}
